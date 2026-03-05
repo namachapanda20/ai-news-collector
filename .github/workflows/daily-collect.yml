@@ -1,0 +1,73 @@
+name: Daily AI News Collection
+
+on:
+  schedule:
+    # 毎朝9時 (JST) に実行 = UTC 0:00
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      enable_slack:
+        description: 'Slack通知を有効にする'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily news collector
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # GitHub ActionsではClaude CLIが使えないため、AI要約はスキップ
+          # ローカルでAI要約を行う場合は: python main.py daily
+          ARGS="daily --no-ai-summary"
+
+          # 手動実行時のオプション処理
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.enable_slack }}" = "false" ]; then
+              ARGS="$ARGS --no-slack"
+            fi
+          fi
+
+          python main.py $ARGS
+
+      - name: Configure git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Commit and push data
+        run: |
+          git add data/articles/*.json output/*.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Add daily news data $(date +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Upload report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-${{ github.run_id }}
+          path: |
+            output/*.md
+            data/articles/*.json
+          retention-days: 30

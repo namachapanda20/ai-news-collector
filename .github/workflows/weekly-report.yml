@@ -1,0 +1,87 @@
+name: Weekly AI News Report
+
+on:
+  schedule:
+    # 毎週月曜日 9時 (JST) に実行 = UTC 日曜日 24:00 = 月曜 0:00
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      weeks_back:
+        description: '何週間前のレポートを生成するか'
+        required: false
+        default: '0'
+        type: string
+      days:
+        description: '集計日数'
+        required: false
+        default: '7'
+        type: string
+      top_n:
+        description: '上位N件を抽出'
+        required: false
+        default: '20'
+        type: string
+      enable_slack:
+        description: 'Slack通知を有効にする'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate weekly report
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          ARGS="weekly"
+
+          # 手動実行時のオプション処理
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ARGS="$ARGS --weeks-back ${{ inputs.weeks_back }}"
+            ARGS="$ARGS --days ${{ inputs.days }}"
+            ARGS="$ARGS --top-n ${{ inputs.top_n }}"
+            if [ "${{ inputs.enable_slack }}" = "false" ]; then
+              ARGS="$ARGS --no-slack"
+            fi
+          fi
+
+          python main.py $ARGS
+
+      - name: Configure git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Commit and push report
+        run: |
+          git add output/weekly/*.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Add weekly report $(date +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Upload report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-report-${{ github.run_id }}
+          path: output/weekly/*.md
+          retention-days: 90
